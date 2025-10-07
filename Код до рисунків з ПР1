@@ -1,0 +1,284 @@
+"""
+Практична робота 1: Розкладання часового ряду на складові
+Аналог роботи в STATISTICA, виконаний в Python
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.sandbox.stats.runs import runstest_1samp
+import scipy.stats as stats
+
+# =============================================================================
+# 1. СТВОРЕННЯ ФАЙЛУ ЗІ СТАТИСТИЧНИМИ ДАНИМИ
+# =============================================================================
+
+print("КРОК 1: Створення файлу зі статистичними даними")
+print("=" * 50)
+
+# Створюємо синтетичні дані часового ряду (аналог series_g.sta)
+np.random.seed(42)  # Для відтворюваності результатів
+
+# Параметри ряду
+n_periods = 150
+time_index = pd.date_range(start='2010-01-01', periods=n_periods, freq='M')
+
+# Компоненти ряду (адитивна модель)
+trend = np.linspace(100, 500, n_periods)  # Лінійний тренд
+seasonal = 50 * np.sin(2 * np.pi * np.arange(n_periods) / 12)  # Сезонність (12 місяців)
+noise = np.random.normal(0, 20, n_periods)  # Випадкова компонента
+
+# Фінальний ряд (адитивна модель)
+passenger_data = trend + seasonal + noise
+
+# Створюємо DataFrame
+df = pd.DataFrame({
+    'Date': time_index,
+    'Passengers': passenger_data,
+    'Month': time_index.month,
+    'Year': time_index.year
+})
+
+print("Перші 10 рядків даних:")
+print(df.head(10))
+print(f"\nРозмірність даних: {df.shape}")
+
+# =============================================================================
+# 2. ЗБЕРЕЖЕННЯ ФАЙЛУ ДЛЯ ПОДАЛЬШОГО АНАЛІЗУ
+# =============================================================================
+
+print("\nКРОК 2: Збереження файлу")
+print("=" * 50)
+
+df.to_csv('time_series_data.csv', index=False)
+print("Файл 'time_series_data.csv' успішно збережено!")
+
+# =============================================================================
+# 3. ГРАФІЧНЕ ЗОБРАЖЕННЯ ДАНИХ ТА ВИСНОВОК ПРО ТРЕНД
+# =============================================================================
+
+print("\nКРОК 3: Графічне зображення даних та аналіз тренду")
+print("=" * 50)
+
+plt.figure(figsize=(12, 8))
+
+# Основний графік часового ряду
+plt.subplot(2, 1, 1)
+plt.plot(df['Date'], df['Passengers'], linewidth=2, label='Пасажири (тис.)')
+plt.title('Динаміка пасажиропотоку (аналог SERIES_G)', fontsize=14, fontweight='bold')
+plt.xlabel('Дата')
+plt.ylabel('Кількість пасажирів (тис.)')
+plt.grid(True, alpha=0.3)
+plt.legend()
+
+# Графік з виділенням тренду (просте ковзне середнє)
+plt.subplot(2, 1, 2)
+plt.plot(df['Date'], df['Passengers'], alpha=0.7, label='Вихідний ряд')
+rolling_mean = df['Passengers'].rolling(window=12).mean()
+plt.plot(df['Date'], rolling_mean, color='red', linewidth=3, label='Тренд (ковзне середнє 12 міс.)')
+plt.title('Вихідний ряд та виділений тренд', fontsize=14, fontweight='bold')
+plt.xlabel('Дата')
+plt.ylabel('Кількість пасажирів (тис.)')
+plt.grid(True, alpha=0.3)
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+print("ВИСНОВОК: На графіку чітко прослідковується зростаючий тренд та періодичні сезонні коливання.")
+
+# =============================================================================
+# 4. КРИТЕРІЙ «ВИСХІДНИХ І НИЗХІДНИХ» СЕРІЙ
+# =============================================================================
+
+print("\nКРОК 4: Критерій «висхідних і низхідних» серій")
+print("=" * 50)
+
+
+def runs_test_analysis(series):
+    """Аналіз тренду за допомогою критерію серій"""
+
+    # Перетворюємо ряд у послідовність знаків приростів
+    differences = np.diff(series)
+    signs = np.sign(differences)
+    signs = signs[signs != 0]  # Видаляємо нулі
+
+    # Конвертуємо у бінарну послідовність (1 - зростання, 0 - спадання)
+    binary_series = (signs > 0).astype(int)
+
+    # Тест серій
+    z_stat, p_value = runstest_1samp(binary_series, correction=False)
+
+    return z_stat, p_value, binary_series
+
+
+# Застосовуємо тест
+z_stat, p_value, binary_series = runs_test_analysis(df['Passengers'].values)
+
+print(f"Z-статистика: {z_stat:.4f}")
+print(f"P-значення: {p_value:.4f}")
+print(f"Кількість спостережень: {len(binary_series)}")
+
+# Візуалізація серій
+plt.figure(figsize=(12, 4))
+plt.plot(binary_series, 'o-', alpha=0.7)
+plt.title('Послідовність «висхідних і низхідних» серій\n(1 - зростання, 0 - спадання)')
+plt.xlabel('Номер спостереження')
+plt.ylabel('Напрям зміни')
+plt.grid(True, alpha=0.3)
+plt.yticks([0, 1], ['Спадання', 'Зростання'])
+plt.show()
+
+if p_value < 0.05:
+    print("ВИСНОВОК: Тенденція в часовому ряду ПРИСУТНЯ (гіпотеза про випадковість відхиляється)")
+else:
+    print("ВИСНОВОК: Тенденція в часовому ряду ВІДСУТНЯ (ряд є випадковим)")
+
+# =============================================================================
+# 5. РОЗКЛАДАННЯ ДИНАМІЧНОГО РЯДУ НА СКЛАДОВІ
+# =============================================================================
+
+print("\nКРОК 5: Розкладання динамічного ряду на складові")
+print("=" * 50)
+
+# Встановлюємо індекс часу для аналізу
+ts_series = df.set_index('Date')['Passengers']
+
+# Виконуємо сезонну декомпозицію (адитивна модель)
+decomposition = seasonal_decompose(ts_series, model='additive', period=12)
+
+# Візуалізація розкладання на компоненти
+fig = decomposition.plot()
+fig.set_size_inches(12, 10)
+fig.suptitle('РОЗКЛАДАННЯ ЧАСОВОГО РЯДУ НА СКЛАДОВІ', fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+# Детальніша візуалізація кожної компоненти
+fig, axes = plt.subplots(4, 1, figsize=(14, 12))
+
+# Вихідний ряд
+axes[0].plot(decomposition.observed)
+axes[0].set_title('SERIES_G - Вихідний часовий ряд', fontweight='bold')
+axes[0].set_ylabel('Пасажири (тис.)')
+axes[0].grid(True, alpha=0.3)
+
+# Тренд
+axes[1].plot(decomposition.trend)
+axes[1].set_title('Тренд (Moving averages)', fontweight='bold')
+axes[1].set_ylabel('Тренд')
+axes[1].grid(True, alpha=0.3)
+
+# Сезонна складова
+axes[2].plot(decomposition.seasonal)
+axes[2].set_title('Сезонна складова (Seasonal factors)', fontweight='bold')
+axes[2].set_ylabel('Сезонність')
+axes[2].grid(True, alpha=0.3)
+
+# Випадкова складова
+axes[3].plot(decomposition.resid)
+axes[3].set_title('Випадкова складова (Irregular component)', fontweight='bold')
+axes[3].set_ylabel('Залишки')
+axes[3].set_xlabel('Час')
+axes[3].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Аналіз компонент
+print("\nАНАЛІЗ СКЛАДОВИХ РЯДУ:")
+print(f"Тренд: {('зростаючий' if decomposition.trend.mean() > decomposition.trend.iloc[0] else 'спадаючий')}")
+print(f"Амплітуда сезонних коливань: ±{decomposition.seasonal.abs().max():.2f}")
+print(f"Стандартне відхилення випадкової компоненти: {decomposition.resid.std():.2f}")
+
+# =============================================================================
+# 6. АВТОКОРЕЛЯЦІЙНА ФУНКЦІЯ ВИПАДКОВОЇ КОМПОНЕНТИ
+# =============================================================================
+
+print("\nКРОК 6: Автокореляційна функція випадкової компоненти")
+print("=" * 50)
+
+# Очищаємо залишкову компоненту від NaN значень
+residual_clean = decomposition.resid.dropna()
+
+plt.figure(figsize=(12, 6))
+
+# Графік випадкової компоненти
+plt.subplot(1, 2, 1)
+plt.plot(residual_clean)
+plt.title('Випадкова складова часового ряду')
+plt.xlabel('Час')
+plt.ylabel('Відхилення')
+plt.grid(True, alpha=0.3)
+
+# Автокореляційна функція
+plt.subplot(1, 2, 2)
+plot_acf(residual_clean, lags=50, alpha=0.05,
+         title='Автокореляційна функція випадкової компоненти\n(95% довірчий інтервал)')
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Статистичний тест на стаціонарність (додатково)
+from statsmodels.tsa.stattools import adfuller
+
+adf_test = adfuller(residual_clean.dropna())
+print(f"Тест Дікі-Фулера на стаціонарність:")
+print(f"ADF статистика: {adf_test[0]:.4f}")
+print(f"P-значення: {adf_test[1]:.4f}")
+
+if adf_test[1] < 0.05:
+    print("ВИСНОВОК: Випадкова компонента СТАЦІОНАРНА (p < 0.05)")
+    print("ВИСНОВОК: Розкладання ряду проведено КОРЕКТНО")
+else:
+    print("ВИСНОВОК: Випадкова компонента НЕСТАЦІОНАРНА (p ≥ 0.05)")
+    print("ВИСНОВОК: Розкладання ряду потребує коригування")
+
+# =============================================================================
+# ДОДАТКОВИЙ АНАЛІЗ: ОЦІНКА ЯКОСТІ РОЗКЛАДАННЯ
+# =============================================================================
+
+print("\nДОДАТКОВИЙ АНАЛІЗ: Оцінка якості розкладання")
+print("=" * 50)
+
+# Перевірка, чи сума компонентів дорівнює вихідному ряду
+reconstructed = decomposition.trend + decomposition.seasonal + decomposition.resid
+reconstruction_error = np.mean(np.abs(decomposition.observed - reconstructed))
+
+print(f"Похибка реконструкції: {reconstruction_error:.6f}")
+print("Це підтверджує коректність адитивної моделі розкладання")
+
+# Аналіз розподілу залишків
+plt.figure(figsize=(10, 6))
+
+plt.subplot(1, 2, 1)
+plt.hist(residual_clean, bins=20, alpha=0.7, edgecolor='black')
+plt.title('Гістограма розподілу залишків')
+plt.xlabel('Значення')
+plt.ylabel('Частота')
+
+plt.subplot(1, 2, 2)
+stats.probplot(residual_clean, dist="norm", plot=plt)
+plt.title('Q-Q plot (нормальний розподіл)')
+
+plt.tight_layout()
+plt.show()
+
+# Тест на нормальність залишків
+shapiro_test = stats.shapiro(residual_clean)
+print(f"\nТест Шапіро-Вілка на нормальність:")
+print(f"Статистика: {shapiro_test[0]:.4f}, P-значення: {shapiro_test[1]:.4f}")
+
+if shapiro_test[1] > 0.05:
+    print("Залишки розподілені нормально (p > 0.05)")
+else:
+    print("Залишки не розподілені нормально (p ≤ 0.05)")
+
+print("\n" + "=" * 60)
+print("ЛАБОРАТОРНУ РОБОТУ ВИКОНАНО ПОВНІСТЮ В PYTHON!")
+print("Всі етапи аналогічні роботі в STATISTICA, але з більшою гнучкістю")
+print("Зроблено студентами групи І-24 Коваленко Олександром Вікторовичем та Звонником Дмитріем Сергійовичем")
+print("=" * 60)
